@@ -3,12 +3,12 @@ from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageH
 
 # === Настройки ===
 TOKEN = "8762191293:AAGpFFHJpgIIQAJR6TNBpJNJikdKpwgM4qg"   # твой токен
-YOUR_ID = 7822572763                                        # твой личный Telegram ID
+YOUR_ID = 7822572763                                        # твой Telegram ID
 CHANNEL_ID = "@ishutebyazai"                                # канал для публикации одобренных сообщений
 
 # === Хранение сообщений ===
-pending_messages = {}   # ID сообщения: текст
-approved_messages = []  # список одобренных
+pending_messages = {}  # ID: {"text": текст, "user": ник или "Аноним"}
+approved_messages = []  # список одобренных сообщений
 
 # === Команда /start ===
 def start(update: Update, context: CallbackContext):
@@ -19,7 +19,7 @@ def start(update: Update, context: CallbackContext):
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text('Выберите режим отправки сообщения:', reply_markup=reply_markup)
 
-# === Обработка выбора кнопок ===
+# === Обработка кнопок выбора анонимности ===
 def button(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
@@ -29,45 +29,55 @@ def button(update: Update, context: CallbackContext):
 # === Получение сообщений от пользователей ===
 def message_handler(update: Update, context: CallbackContext):
     anon = context.user_data.get('anon', True)
-    if anon:
-        text = f"Аноним: {update.message.text}"
-    else:
-        text = f"{update.message.from_user.first_name}: {update.message.text}"
+    username = update.message.from_user.username if update.message.from_user.username else update.message.from_user.first_name
+    display_user = "Аноним" if anon else f"@{username}"
+    text = update.message.text
 
-    # Сохраняем в очередь модерации
     msg_id = len(pending_messages) + 1
-    pending_messages[msg_id] = text
+    pending_messages[msg_id] = {"text": text, "user": display_user}
 
-    # Отправляем тебе на проверку
+    # Кнопки для модерации
+    keyboard = [
+        [InlineKeyboardButton("Опубликовать ✅", callback_data=f"approve_{msg_id}")],
+        [InlineKeyboardButton("Отклонить ❌", callback_data=f"reject_{msg_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     context.bot.send_message(
         chat_id=YOUR_ID,
-        text=f"Новое сообщение #{msg_id}:\n{text}\n\nИспользуй /approve {msg_id} или /reject {msg_id}"
+        text=f"Новое сообщение #{msg_id}:\n<b>{display_user}:</b> {text}",
+        parse_mode='HTML',
+        reply_markup=reply_markup
     )
 
     update.message.reply_text("Сообщение отправлено на модерацию ✅")
 
-# === Команды для модерации ===
-def approve(update: Update, context: CallbackContext):
-    if update.effective_user.id != YOUR_ID:
-        return
-    try:
-        msg_id = int(context.args[0])
-        text = pending_messages.pop(msg_id)
-        approved_messages.append(text)
-        context.bot.send_message(chat_id=CHANNEL_ID, text=text)
-        update.message.reply_text(f"Сообщение #{msg_id} одобрено ✅")
-    except:
-        update.message.reply_text("Неверный ID сообщения ❌")
+# === Обработка кнопок модерации для тебя ===
+def moderation_buttons(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    data = query.data
 
-def reject(update: Update, context: CallbackContext):
-    if update.effective_user.id != YOUR_ID:
-        return
-    try:
-        msg_id = int(context.args[0])
-        pending_messages.pop(msg_id)
-        update.message.reply_text(f"Сообщение #{msg_id} отклонено ❌")
-    except:
-        update.message.reply_text("Неверный ID сообщения ❌")
+    if data.startswith("approve_"):
+        msg_id = int(data.split("_")[1])
+        msg = pending_messages.pop(msg_id, None)
+        if msg:
+            # Публикуем в канал красиво
+            context.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=f"💌 Новое сообщение:\n<b>{msg['user']}:</b> {msg['text']}",
+                parse_mode='HTML'
+            )
+            approved_text = f"{msg['user']}: {msg['text']}"
+            approved_messages.append(approved_text)
+            query.edit_message_text(f"Сообщение #{msg_id} одобрено ✅")
+        else:
+            query.edit_message_text("Сообщение уже обработано ❌")
+
+    elif data.startswith("reject_"):
+        msg_id = int(data.split("_")[1])
+        pending_messages.pop(msg_id, None)
+        query.edit_message_text(f"Сообщение #{msg_id} отклонено ❌")
 
 # === Запуск бота ===
 def main():
@@ -75,10 +85,9 @@ def main():
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button))
+    dp.add_handler(CallbackQueryHandler(button, pattern='^(anon|nonanon)$'))
+    dp.add_handler(CallbackQueryHandler(moderation_buttons, pattern='^(approve|reject)_'))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
-    dp.add_handler(CommandHandler("approve", approve))
-    dp.add_handler(CommandHandler("reject", reject))
 
     updater.start_polling()
     updater.idle()
