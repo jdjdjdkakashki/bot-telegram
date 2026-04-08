@@ -1,0 +1,47 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
+
+TOKEN = "8762191293:AAGpFFHJpgIIQAJR6TNBpJNJikdKpwgM4qg"
+
+# Хранение сообщений (простейший вариант)
+messages = []
+
+# Кнопки выбора анонимности
+def start(update: Update, context: CallbackContext):
+    keyboard = [
+        [InlineKeyboardButton("Анонимно", callback_data='anon')],
+        [InlineKeyboardButton("Не анонимно", callback_data='nonanon')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text('Выберите режим отправки сообщения:', reply_markup=reply_markup)
+
+# Обработка выбора кнопок
+def button(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    context.user_data['anon'] = (query.data == 'anon')
+    query.edit_message_text(text="Напишите ваше сообщение:")
+    return
+
+# Сбор сообщений
+def message_handler(update: Update, context: CallbackContext):
+    anon = context.user_data.get('anon', True)
+    if anon:
+        messages.append(f"Аноним: {update.message.text}")
+    else:
+        messages.append(f"{update.message.from_user.first_name}: {update.message.text}")
+    update.message.reply_text("Сообщение сохранено ✅")
+
+def main():
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
+
+    updater.start_polling()
+    updater.idle()
+
+if name == '__main__':
+    main()
